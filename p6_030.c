@@ -197,7 +197,7 @@ void print_state() {
     }
     
     // Tampilkan status filsuf
-    printf("\n | Para Filsuf: \n");
+    printf("\nSTATE Para Filsuf: \n");
     for (i = 0; i < N; i++) {
         char *state_str;
         switch(state[i]) {
