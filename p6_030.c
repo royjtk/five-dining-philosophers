@@ -1,475 +1,214 @@
-/**
- * Masalah Lima Filsuf Makan - Implementasi berdasarkan model Petri Net yang dioptimalkan
- * Nama: Roy Aziz Barera
- * NIM: 221524030
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <time.h>
+
+/*
+ * Program ini mengimplementasikan Masalah Lima Filsuf Makan
+ * berdasarkan model Petri Net yang telah dioptimasi oleh saya.
  * 
- * Program ini mengimplementasikan Masalah Lima Filsuf Makan menggunakan Pthreads
- * berdasarkan model Petri Net yang dioptimalkan dari tugas sebelumnya.
- * Dengan tambahan fitur untuk mode manual dan otomatis.
+ * Aspek-aspek kunci model:
+ * 1. Setiap filsuf membutuhkan dua sumber daya (garpu) untuk makan
+ * 2. Filsuf mengambil kedua sumber daya secara bersamaan (operasi atomik)
+ * 3. Filsuf melepaskan kedua sumber daya secara bersamaan (operasi atomik)
+ * 4. Beberapa filsuf dapat makan secara bersamaan jika sumber daya tersedia
+ * 5. Model ini mencegah deadlock melalui pengelolaan sumber daya yang mengembalikan atau mengambil langsung 2 resource seklaigus
  */
 
- #include <stdio.h>
- #include <stdlib.h>
- #include <pthread.h>
- #include <unistd.h>
- #include <time.h>
- #include <conio.h> // Untuk getch()
- #include <stdbool.h>
- 
- #define NUM_PHILOSOPHERS 5
- #define THINKING_TIME 2
- #define EATING_TIME 3
- #define ITERATION_COUNT 3
- #define MIN_AUTO_INTERVAL 3
- #define MAX_AUTO_INTERVAL 5
- 
- // Mutex untuk setiap sumber daya/sumpit (sesuai dengan Resource 1-5 dalam model)
- pthread_mutex_t resources[NUM_PHILOSOPHERS];
- 
- // Status untuk setiap filsuf (0: berpikir, 1: mencoba makan, 2: sedang makan)
- int philosopher_status[NUM_PHILOSOPHERS] = {0};
- 
- // Mutex untuk melindungi akses ke status filsuf
- pthread_mutex_t status_mutex;
- 
- // Variabel untuk mode otomatis
- bool auto_mode = false;
- bool program_running = true;
- int auto_interval_min = MIN_AUTO_INTERVAL;
- int auto_interval_max = MAX_AUTO_INTERVAL;
- pthread_t auto_thread;
- 
- // Thread untuk setiap filsuf dalam mode konkuren
- pthread_t philosopher_threads[NUM_PHILOSOPHERS];
- bool concurrent_mode = false;
- 
- // Prototipe fungsi
- void think(int philosopher_id);
- void eat(int philosopher_id);
- void pickup_resources(int philosopher_id);
- void return_resources(int philosopher_id);
- void print_status();
- void *auto_mode_thread(void *arg);
- void manual_mode();
- void auto_mode_control();
- void concurrent_mode_control();
- void *philosopher_thread_function(void *arg);
- void philosopher_action(int philosopher_id);
- 
- /**
-  * Fungsi utama
-  * Menginisialisasi sumber daya dan menjalankan mode yang dipilih
-  */
- int main() {
-     int i;
-     int mode_choice;
-     
-     // Inisialisasi seed acak
-     srand(time(NULL));
-     
-     printf("Masalah Lima Filsuf Makan - Berdasarkan Model Petri Net yang Dioptimalkan\n");
-     printf("------------------------------------------------------------\n");
-     
-     // Inisialisasi mutex untuk status
-     if (pthread_mutex_init(&status_mutex, NULL) != 0) {
-         printf("Gagal menginisialisasi mutex untuk status\n");
-         return 1;
-     }
-     
-     // Inisialisasi sumber daya/sumpit
-     for (i = 0; i < NUM_PHILOSOPHERS; i++) {
-         if (pthread_mutex_init(&resources[i], NULL) != 0) {
-             printf("Gagal menginisialisasi mutex untuk sumber daya %d\n", i);
-             return 1;
-         }
-     }
-     
-     printf("Pilih mode:\n");
-     printf("1. Mode Manual (Pilih filsuf untuk makan)\n");
-     printf("2. Mode Otomatis (Filsuf makan secara bergantian sesuai interval waktu)\n");
-     printf("3. Mode Konkuren (Semua filsuf mencoba makan bersamaan jika memungkinkan)\n");
-     printf("Pilihan Anda: ");
-     scanf("%d", &mode_choice);
-     
-     if (mode_choice == 1) {
-         // Mode Manual
-         manual_mode();
-     } else if (mode_choice == 2) {
-         // Mode Otomatis
-         auto_mode_control();
-     } else if (mode_choice == 3) {
-         // Mode Konkuren
-         concurrent_mode_control();
-     } else {
-         printf("Pilihan tidak valid!\n");
-     }
-     
-     // Menghapus mutex
-     for (i = 0; i < NUM_PHILOSOPHERS; i++) {
-         pthread_mutex_destroy(&resources[i]);
-     }
-     pthread_mutex_destroy(&status_mutex);
-     
-     printf("\nProgram selesai.\n");
-     
-     return 0;
- }
- 
- /**
-  * Mode manual: memungkinkan pengguna memilih filsuf mana yang akan makan
-  */
- void manual_mode() {
-     int choice;
-     
-     printf("\nMode Manual\n");
-     printf("------------\n");
-     
-     while (1) {
-         print_status();
-         
-         printf("\nMenu:\n");
-         printf("1-5: Pilih filsuf untuk makan\n");
-         printf("0: Keluar\n");
-         printf("Pilihan Anda: ");
-         scanf("%d", &choice);
-         
-         if (choice >= 1 && choice <= 5) {
-             philosopher_action(choice - 1);
-         } else if (choice == 0) {
-             break;
-         } else {
-             printf("Pilihan tidak valid!\n");
-         }
-     }
- }
- 
- /**
-  * Mode otomatis: filsuf akan makan secara otomatis dengan interval waktu tertentu
-  */
- void auto_mode_control() {
-     int choice;
-     
-     printf("\nMode Otomatis\n");
-     printf("-------------\n");
-     printf("Masukkan interval waktu minimum (detik): ");
-     scanf("%d", &auto_interval_min);
-     printf("Masukkan interval waktu maksimum (detik): ");
-     scanf("%d", &auto_interval_max);
-     
-     auto_mode = true;
-     
-     // Membuat thread untuk mode otomatis
-     pthread_create(&auto_thread, NULL, auto_mode_thread, NULL);
-     
-     printf("\nMode otomatis dijalankan dengan interval %d-%d detik\n", auto_interval_min, auto_interval_max);
-     printf("Tekan '0' untuk kembali ke menu utama\n");
-     
-     while (1) {
-         if (_kbhit()) {
-             choice = _getch() - '0';
-             if (choice == 0) {
-                 program_running = false;
-                 auto_mode = false;
-                 pthread_join(auto_thread, NULL);
-                 break;
-             }
-         }
-         sleep(1);
-     }
- }
- 
- /**
-  * Mode konkuren: semua filsuf mencoba makan secara bersamaan jika memungkinkan
-  */
- void concurrent_mode_control() {
-     int i, choice;
-     
-     printf("\nMode Konkuren\n");
-     printf("-------------\n");
-     printf("Pada mode ini, filsuf akan mencoba makan ketika mereka memiliki kesempatan\n");
-     printf("Beberapa filsuf dapat makan secara bersamaan jika kondisi memungkinkan\n");
-     
-     concurrent_mode = true;
-     program_running = true;
-     
-     // Membuat thread untuk setiap filsuf
-     for (i = 0; i < NUM_PHILOSOPHERS; i++) {
-         int *id = malloc(sizeof(int));
-         *id = i;
-         pthread_create(&philosopher_threads[i], NULL, philosopher_thread_function, (void*)id);
-     }
-     
-     printf("\nMode konkuren dijalankan. Tekan '0' untuk kembali ke menu utama\n");
-     
-     while (1) {
-         if (_kbhit()) {
-             choice = _getch() - '0';
-             if (choice == 0) {
-                 program_running = false;
-                 concurrent_mode = false;
-                 
-                 // Menunggu semua thread filsuf selesai
-                 for (i = 0; i < NUM_PHILOSOPHERS; i++) {
-                     pthread_join(philosopher_threads[i], NULL);
-                 }
-                 
-                 break;
-             }
-         }
-         
-         // Tampilkan status setiap beberapa detik
-         print_status();
-         sleep(2);
-     }
- }
- 
- /**
-  * Thread untuk filsuf dalam mode konkuren
-  */
- void *philosopher_thread_function(void *arg) {
-     int philosopher_id = *((int *)arg);
-     free(arg);
-     
-     while (concurrent_mode && program_running) {
-         // Filsuf berpikir untuk beberapa saat
-         think(philosopher_id);
-         
-         // Mencoba untuk makan
-         pthread_mutex_lock(&status_mutex);
-         philosopher_status[philosopher_id] = 1; // mencoba makan
-         pthread_mutex_unlock(&status_mutex);
-         
-         // Coba ambil sumpit dengan algoritma yang mencegah deadlock
-         int can_eat = 1;
-         int first_resource, second_resource;
-         
-         // Gunakan strategi untuk mencegah deadlock: filosofer genap mengambil sumpit kiri dulu, ganjil mengambil kanan dulu
-         if (philosopher_id % 2 == 0) {
-             first_resource = philosopher_id;
-             second_resource = (philosopher_id + 1) % NUM_PHILOSOPHERS;
-         } else {
-             second_resource = (philosopher_id + 1) % NUM_PHILOSOPHERS;
-             first_resource = philosopher_id;
-         }
-         
-         // Coba ambil sumpit pertama
-         if (pthread_mutex_trylock(&resources[first_resource]) != 0) {
-             can_eat = 0;
-             printf("Filsuf %d tidak bisa mengambil sumpit pertama (Sumber Daya %d)\n", philosopher_id + 1, first_resource + 1);
-         } else {
-             printf("Filsuf %d mengambil sumpit pertama (Sumber Daya %d)\n", philosopher_id + 1, first_resource + 1);
-             
-             // Coba ambil sumpit kedua
-             if (pthread_mutex_trylock(&resources[second_resource]) != 0) {
-                 can_eat = 0;
-                 pthread_mutex_unlock(&resources[first_resource]);
-                 printf("Filsuf %d tidak bisa mengambil sumpit kedua (Sumber Daya %d), mengembalikan sumpit pertama\n", philosopher_id + 1, second_resource + 1);
-             } else {
-                 printf("Filsuf %d mengambil sumpit kedua (Sumber Daya %d)\n", philosopher_id + 1, second_resource + 1);
-             }
-         }
-         
-         if (can_eat) {
-             // Filsuf bisa makan
-             pthread_mutex_lock(&status_mutex);
-             philosopher_status[philosopher_id] = 2; // sedang makan
-             pthread_mutex_unlock(&status_mutex);
-             
-             // Makan
-             eat(philosopher_id);
-             
-             // Kembalikan sumpit
-             pthread_mutex_unlock(&resources[second_resource]);
-             printf("Filsuf %d mengembalikan sumpit kedua (Sumber Daya %d)\n", philosopher_id + 1, second_resource + 1);
-             
-             pthread_mutex_unlock(&resources[first_resource]);
-             printf("Filsuf %d mengembalikan sumpit pertama (Sumber Daya %d)\n", philosopher_id + 1, first_resource + 1);
-             
-             pthread_mutex_lock(&status_mutex);
-             philosopher_status[philosopher_id] = 0; // kembali berpikir
-             pthread_mutex_unlock(&status_mutex);
-         } else {
-             // Filsuf tidak bisa makan, kembali berpikir
-             pthread_mutex_lock(&status_mutex);
-             philosopher_status[philosopher_id] = 0;
-             pthread_mutex_unlock(&status_mutex);
-             
-             // Tunggu sebentar sebelum mencoba lagi
-             sleep(1);
-         }
-     }
-     
-     return NULL;
- }
- 
- /**
-  * Thread untuk mode otomatis
-  */
- void *auto_mode_thread(void *arg) {
-     while (auto_mode && program_running) {
-         // Pilih filsuf secara acak
-         int philosopher_id = rand() % NUM_PHILOSOPHERS;
-         
-         // Jalankan aksi filsuf
-         philosopher_action(philosopher_id);
-         
-         // Tunggu interval waktu acak
-         int wait_time = auto_interval_min + rand() % (auto_interval_max - auto_interval_min + 1);
-         sleep(wait_time);
-     }
-     
-     return NULL;
- }
- 
- /**
-  * Menjalankan aksi untuk filsuf tertentu
-  */
- void philosopher_action(int philosopher_id) {
-     pthread_mutex_lock(&status_mutex);
-     int status = philosopher_status[philosopher_id];
-     pthread_mutex_unlock(&status_mutex);
-     
-     if (status == 0) {
-         // Jika filsuf sedang berpikir, coba makan
-         printf("\nFilsuf %d mencoba untuk makan\n", philosopher_id + 1);
-         
-         pthread_mutex_lock(&status_mutex);
-         philosopher_status[philosopher_id] = 1; // mencoba makan
-         pthread_mutex_unlock(&status_mutex);
-         
-         // Coba ambil sumpit
-         int can_eat = 1;
-         
-         int first_resource = philosopher_id;
-         int second_resource = (philosopher_id + 1) % NUM_PHILOSOPHERS;
-         
-         if (pthread_mutex_trylock(&resources[first_resource]) != 0) {
-             can_eat = 0;
-             printf("Filsuf %d tidak bisa mengambil sumpit pertama (Sumber Daya %d)\n", philosopher_id + 1, first_resource + 1);
-         } else {
-             printf("Filsuf %d mengambil sumpit pertama (Sumber Daya %d)\n", philosopher_id + 1, first_resource + 1);
-             
-             if (pthread_mutex_trylock(&resources[second_resource]) != 0) {
-                 can_eat = 0;
-                 pthread_mutex_unlock(&resources[first_resource]);
-                 printf("Filsuf %d tidak bisa mengambil sumpit kedua (Sumber Daya %d), mengembalikan sumpit pertama\n", philosopher_id + 1, second_resource + 1);
-             } else {
-                 printf("Filsuf %d mengambil sumpit kedua (Sumber Daya %d)\n", philosopher_id + 1, second_resource + 1);
-             }
-         }
-         
-         if (can_eat) {
-             // Filsuf bisa makan
-             pthread_mutex_lock(&status_mutex);
-             philosopher_status[philosopher_id] = 2; // sedang makan
-             pthread_mutex_unlock(&status_mutex);
-             
-             int eat_time = rand() % EATING_TIME + 1;
-             printf("Filsuf %d sedang makan selama %d detik\n", philosopher_id + 1, eat_time);
-             sleep(eat_time);
-             
-             // Kembalikan sumpit
-             pthread_mutex_unlock(&resources[second_resource]);
-             printf("Filsuf %d mengembalikan sumpit kedua (Sumber Daya %d)\n", philosopher_id + 1, second_resource + 1);
-             
-             pthread_mutex_unlock(&resources[first_resource]);
-             printf("Filsuf %d mengembalikan sumpit pertama (Sumber Daya %d)\n", philosopher_id + 1, first_resource + 1);
-             
-             pthread_mutex_lock(&status_mutex);
-             philosopher_status[philosopher_id] = 0; // kembali berpikir
-             pthread_mutex_unlock(&status_mutex);
-         } else {
-             // Filsuf tidak bisa makan, kembali berpikir
-             pthread_mutex_lock(&status_mutex);
-             philosopher_status[philosopher_id] = 0;
-             pthread_mutex_unlock(&status_mutex);
-         }
-     } else if (status == 2) {
-         // Jika filsuf sedang makan, kembalikan sumpit
-         printf("\nFilsuf %d menyelesaikan makan dan mengembalikan sumpit\n", philosopher_id + 1);
-         
-         int first_resource = philosopher_id;
-         int second_resource = (philosopher_id + 1) % NUM_PHILOSOPHERS;
-         
-         pthread_mutex_unlock(&resources[second_resource]);
-         printf("Filsuf %d mengembalikan sumpit kedua (Sumber Daya %d)\n", philosopher_id + 1, second_resource + 1);
-         
-         pthread_mutex_unlock(&resources[first_resource]);
-         printf("Filsuf %d mengembalikan sumpit pertama (Sumber Daya %d)\n", philosopher_id + 1, first_resource + 1);
-         
-         pthread_mutex_lock(&status_mutex);
-         philosopher_status[philosopher_id] = 0; // kembali berpikir
-         pthread_mutex_unlock(&status_mutex);
-     } else {
-         printf("\nFilsuf %d sedang mencoba mengambil sumpit\n", philosopher_id + 1);
-     }
- }
- 
- /**
-  * Menampilkan status semua filsuf
-  */
- void print_status() {
-     int i;
-     
-     printf("\nSTATUS FILSUF:\n");
-     printf("--------------\n");
-     
-     pthread_mutex_lock(&status_mutex);
-     for (i = 0; i < NUM_PHILOSOPHERS; i++) {
-         printf("Filsuf %d: ", i + 1);
-         switch (philosopher_status[i]) {
-             case 0:
-                 printf("Berpikir");
-                 break;
-             case 1:
-                 printf("Mencoba makan");
-                 break;
-             case 2:
-                 printf("Sedang makan");
-                 break;
-             default:
-                 printf("Status tidak diketahui");
-         }
-         printf("\n");
-     }
-     pthread_mutex_unlock(&status_mutex);
- }
- 
- // Fungsi bawaan yang tetap dipertahankan
- void think(int philosopher_id) {
-     int think_time = rand() % THINKING_TIME + 1;
-     printf("Filsuf %d sedang berpikir selama %d detik\n", philosopher_id + 1, think_time);
-     sleep(think_time);
- }
- 
- void eat(int philosopher_id) {
-     int eat_time = rand() % EATING_TIME + 1;
-     printf("Filsuf %d sedang makan selama %d detik\n", philosopher_id + 1, eat_time);
-     sleep(eat_time);
- }
- 
- void pickup_resources(int philosopher_id) {
-     printf("Filsuf %d mencoba mengambil sumpit\n", philosopher_id + 1);
-     
-     int first_resource = philosopher_id;
-     int second_resource = (philosopher_id + 1) % NUM_PHILOSOPHERS;
-     
-     pthread_mutex_lock(&resources[first_resource]);
-     printf("Filsuf %d mengambil sumpit pertama (Sumber Daya %d)\n", philosopher_id + 1, first_resource + 1);
-     
-     sleep(1);  // Sedikit delay
-     
-     pthread_mutex_lock(&resources[second_resource]);
-     printf("Filsuf %d mengambil sumpit kedua (Sumber Daya %d)\n", philosopher_id + 1, second_resource + 1);
- }
- 
- void return_resources(int philosopher_id) {
-     int first_resource = philosopher_id;
-     int second_resource = (philosopher_id + 1) % NUM_PHILOSOPHERS;
-     
-     pthread_mutex_unlock(&resources[second_resource]);
-     printf("Filsuf %d mengembalikan sumpit kedua (Sumber Daya %d)\n", philosopher_id + 1, second_resource + 1);
-     
-     pthread_mutex_unlock(&resources[first_resource]);
-     printf("Filsuf %d mengembalikan sumpit pertama (Sumber Daya %d)\n", philosopher_id + 1, first_resource + 1);
- }
+// Jumlah filsuf/sumber daya
+#define N 5
+
+// Status filsuf (sesuai dengan places di Petri Net)
+#define THINKING 0  // Filsuf 1-5 dalam Petri Net
+#define HUNGRY 1    // Status transisi (tidak secara eksplisit dalam Petri Net)
+#define EATING 2    // Eating 1-5 dalam Petri Net
+
+// Variabel global
+pthread_mutex_t mutex;              // Mutex untuk mengamankan akses ke sumber daya
+pthread_cond_t cond[N];             // Variabel kondisi untuk setiap filsuf
+int state[N];                       // Status setiap 
+pthread_t philosophers[N];          // Thread untuk filsuf
+int resources[N] = {1, 1, 1, 1, 1}; // Sumber daya awal (semua tersedia = 1 token di Resource 1-5)
+char *names[N] = {"Filsuf 1", "Filsuf 2", "Filsuf 3", "Filsuf 4", "Filsuf 5"};
+
+// Prototipe fungsi
+void *philosopher(void *arg);
+void think(int id);
+void take_resources(int id);
+void eat(int id);
+void put_resources(int id);
+int left(int id);
+int right(int id);
+void test(int id);
+void print_state();
+
+int main() {
+    int i;
+    
+    // Inisialisasi pembangkit angka acak
+    srand(time(NULL));
+    
+    // Inisialisasi mutex dan variabel kondisi
+    pthread_mutex_init(&mutex, NULL);
+    
+    for (i = 0; i < N; i++) {
+        pthread_cond_init(&cond[i], NULL);
+        state[i] = THINKING;  // Semua filsuf mulai berpikir (marking awal)
+    }
+    
+    printf("Masalah Lima Filsuf Makan\n");
+    printf("--------------------------------\n");
+    
+    // Buat thread filsuf
+    for (i = 0; i < N; i++) {
+        int *id = malloc(sizeof(int));
+        *id = i;
+        pthread_create(&philosophers[i], NULL, philosopher, id);
+    }
+    
+    // Gabungkan thread filsuf - meskipun tidak akan pernah mencapai titik ini karena loop tak terbatas
+    for (i = 0; i < N; i++) {
+        pthread_join(philosophers[i], NULL);
+    }
+    
+    // Pembersihan - meskipun tidak akan pernah mencapai titik ini karena loop tak terbatas
+    pthread_mutex_destroy(&mutex);
+    for (i = 0; i < N; i++) {
+        pthread_cond_destroy(&cond[i]);
+    }
+    
+    return 0;
+}
+
+// Fungsi thread filsuf - merepresentasikan siklus utama dalam Petri Net
+void *philosopher(void *arg) {
+    int id = *(int*)arg;
+    free(arg);
+    
+    // Loop selamanya - ini merepresentasikan siklus dalam Petri Net
+    while (1) {
+        think(id);             // Filsuf berpikir (tempat Filsuf 1-5)
+        take_resources(id);    // Filsuf mencoba mengambil kedua sumber daya (transisi dari Filsuf ke Eating)
+        eat(id);               // Filsuf makan (tempat Eating 1-5)
+        put_resources(id);     // Filsuf melepaskan kedua sumber daya (transisi Return Resource 1-5)
+    }
+    
+    return NULL;
+}
+
+// Filsuf berpikir selama periode acak
+void think(int id) {
+    printf("%s sedang berpikir\n", names[id]);
+    sleep(1 + rand() % 3);  // Berpikir selama 1-3 detik
+}
+
+// Filsuf mencoba mengambil kedua sumber daya
+// Ini sesuai dengan transisi dari Filsuf ke Eating dalam Petri Net
+void take_resources(int id) {
+    pthread_mutex_lock(&mutex);  // Lock mutex untuk mengamankan akses ke sumber daya
+    
+    // Ubah status menjadi HUNGRY
+    state[id] = HUNGRY;
+    printf("\n%s lapar dan mencoba mengambil Sumber Daya %d dan Sumber Daya %d\n", 
+           names[id], left(id) + 1, id + 1);
+    print_state();
+    
+    // Coba ambil kedua sumber daya
+    // Ini adalah pemicu transisi jika kedua tempat input (sumber daya) memiliki token
+    test(id);
+    
+    // Jika tidak dapat mengambil kedua sumber daya, tunggu
+    // Ini merepresentasikan sifat pemblokiran transisi dalam Petri Net ketika input tidak tersedia
+    if (state[id] != EATING) {
+        printf("\n%s sedang menunggu sumber daya...\n", names[id]);
+        pthread_cond_wait(&cond[id], &mutex);
+    }
+    
+    pthread_mutex_unlock(&mutex);  // Keluar bagian kritis
+}
+
+// Filsuf makan selama periode acak
+// Ini sesuai dengan berada di tempat Eating 1-5 dalam Petri Net
+void eat(int id) {
+    printf("\n%s sedang makan menggunakan Sumber Daya %d dan Sumber Daya %d\n", 
+           names[id], left(id) + 1, id + 1);
+    print_state();
+    sleep(1 + rand() % 3);  // Makan selama 1-3 detik
+}
+
+// Filsuf meletakkan kembali kedua sumber daya
+// Ini sesuai dengan transisi Return Resource 1-5 dalam Petri Net
+void put_resources(int id) {
+    pthread_mutex_lock(&mutex);  // Masuk bagian kritis
+    
+    // Ubah status kembali menjadi THINKING
+    state[id] = THINKING;
+    printf("\n%s meletakkan kembali Sumber Daya %d dan Sumber Daya %d\n", 
+           names[id], left(id) + 1, id + 1);
+    
+    // Membuat sumber daya tersedia - mengembalikan token ke tempat Resource
+    resources[left(id)] = 1;
+    resources[id] = 1;
+    
+    // Periksa apakah tetangga sekarang dapat makan (ini adalah efek kaskade dari ketersediaan token)
+    test(left(id));
+    test(right(id));
+    
+    print_state();
+    pthread_mutex_unlock(&mutex);  // Keluar bagian kritis
+}
+
+// Mendapatkan indeks sumber daya kiri - mengimplementasikan pengaturan sumber daya melingkar
+int left(int id) {
+    return (id + N - 1) % N;
+}
+
+// Mendapatkan indeks sumber daya kanan - mengimplementasikan pengaturan sumber daya melingkar
+int right(int id) {
+    return (id + 1) % N;
+}
+
+// Memeriksa apakah filsuf dapat makan
+// Ini memeriksa apakah transisi dari Filsuf ke Eating dapat terpicu
+void test(int id) {
+    // Jika lapar dan kedua sumber daya tersedia (memiliki token)
+    if (state[id] == HUNGRY && resources[left(id)] == 1 && resources[id] == 1) {
+        // Ubah status menjadi EATING (token berpindah ke tempat Eating)
+        state[id] = EATING;
+        
+        // Ambil kedua sumber daya (hapus token dari tempat Resource)
+        resources[left(id)] = 0;
+        resources[id] = 0;
+        
+        // Sinyal filsuf bahwa mereka dapat makan
+        pthread_cond_signal(&cond[id]);
+    }
+}
+
+// Cetak status saat ini dari sumber daya dan filsuf
+void print_state() {
+    int i;
+    
+    // Tampilkan status sumber daya (ketersediaan token)
+    printf("Sumber Daya: ");
+    for (i = 0; i < N; i++) {
+        printf("%d ", resources[i]);
+    }
+    
+    // Tampilkan status filsuf
+    printf("\n | Para Filsuf: \n");
+    for (i = 0; i < N; i++) {
+        char *state_str;
+        switch(state[i]) {
+            case THINKING: state_str = "BERPIKIR"; break;
+            case HUNGRY: state_str = "LAPAR"; break;
+            case EATING: state_str = "MAKAN"; break;
+            default: state_str = "TIDAK DIKETAHUI";
+        }
+        printf("%s: %s, \n", names[i], state_str);
+        // Enter untuk melanjutkan ke baris berikutnya
+        getchar(); // Tunggu input pengguna untuk melanjutkan
+    }
+    printf("\n");
+}
